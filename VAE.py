@@ -8,19 +8,24 @@ from torch.distributions import Normal
 from torch.distributions.kl import kl_divergence
 from tqdm import tqdm
 import argparse
+import seaborn as sns; sns.set(color_codes=True)
+import numpy as np
+import matplotlib.pyplot as plt
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--devid", type=int, default=-1)
 
-    parser.add_argument("--epochs", type=int, default=13)
-    parser.add_argument("--latdim", type=int, default=50)
+    parser.add_argument("--epoch", type=int, default=13)
+    parser.add_argument("--latdim", type=int, default=2)
+    parser.add_argument("--layersize", type=int, default=256)
+    parser.add_argument("--alpha", type=float, default=1)
 
     parser.add_argument("--optim", choices=["Adadelta", "Adam", "SGD"], default="SGD")
 
-    parser.add_argument("--lr", type=float, default=0.0001)
+    parser.add_argument("--lr", type=float, default=0.001)
 
-    parser.add_argument("--bsize", type=int, default=10)
+    parser.add_argument("--bsize", type=int, default=128)
     return parser.parse_args()
 
 args = parse_args()
@@ -73,11 +78,13 @@ def load_mnist():
 class Encoder(nn.Module):
     def __init__(self, dim):
         super(Encoder, self).__init__()
-        self.linear1 = nn.Linear(2, dim)
-        self.linear2 = nn.Linear(dim, args.latdim)
-        self.linear3 = nn.Linear(dim, args.latdim)
+        self.linear1 = nn.Linear(dim, args.layersize)
+        self.linear2 = nn.Linear(args.layersize, args.latdim)
+        self.linear3 = nn.Linear(args.layersize, args.latdim)
 
     def forward(self, x):
+
+        
         h = F.relu(self.linear1(x))
         
         #Returns mean and variance (??)
@@ -88,8 +95,9 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, dim):
         super(Decoder, self).__init__()
-        self.linear1 = nn.Linear(args.latdim, dim)
-        self.linear2 = nn.Linear(dim, 2)
+        self.linear1 = nn.Linear(args.latdim, args.layersize)
+        self.linear2 = nn.Linear(args.layersize, dim)
+        #self.sigmoid = nn.Sigmoid()
 
     def forward(self, z):
         return self.linear2(F.relu(self.linear1(z)))
@@ -109,7 +117,7 @@ class NormalVAE(nn.Module):
     def forward(self, x_src):
         # Example variational parameters lambda
         mu, logvar = self.encoder(x_src)
-        
+
         # Where does the mul(.5) come from?
         q_normal = Normal(loc=mu, scale=logvar.mul(0.5).exp())
     
@@ -118,8 +126,126 @@ class NormalVAE(nn.Module):
         z_sample = q_normal.rsample()
         #z_sample = mu
         return self.decoder(z_sample), q_normal
+# Get samples.
+p = Normal(V(torch.zeros(args.bsize, args.latdim)), 
+                        V(torch.ones(args.bsize, args.latdim)))
+
+seed_distribution = Normal(V(torch.zeros(args.bsize, args.latdim)), 
+                        V(torch.ones(args.bsize, args.latdim)))
+
+def train(train_loader, model, loss_func):
+    model.train()
+
+    total_loss = 0
+    total_kl = 0
+    total = 0
+    alpha = args.alpha
+    for t in train_loader:
+        img, label = t
+        batch_size = img.size()[0]
+        if batch_size == args.bsize:
+
+            
+            # Standard setup. 
+            model.zero_grad()
+            x = img.view(args.bsize, -1)
+    
+            # Run VAE. 
+            out, q = model(x)
+            kl = kl_divergence(q, p).sum()
+            rec_loss = loss_func(out, x)
+            
+            loss = rec_loss + alpha * kl 
+            loss = loss / batch_size
+    
+            # record keeping.
+            total_loss += loss_func(out, x).data / batch_size
+            total_kl += kl.data / batch_size
+            total += 1
+            loss.backward()
+            optim.step()
+        
+    return total_loss / total, total_kl / total
+
+def val(val_loader, model, loss_func):
+    model.eval()
+
+    total_loss = 0
+    total_kl = 0
+    total = 0
+    alpha = args.alpha
+    for t in val_loader:
+        img, label = t
+        batch_size = img.size()[0]
+        if batch_size == args.bsize:
+        
+            x = img.view(args.bsize, -1)
+    
+            # Run VAE. 
+            out, q = model(x)
+            kl = kl_divergence(q, p).sum()
+            
+            rec_loss = loss_func(out, x)
+            
+            loss = rec_loss + alpha * kl 
+            loss = loss / args.bsize
+    
+            # record keeping.
+            total_loss += loss_func(out, x).data / args.bsize
+            total_kl += kl.data / args.bsize
+            total += 1
+            
+            #look at test sample
+            #if total % 10 == 0:
+            #    fig, ax = plt.subplots()
+            #    ax.matshow(out.view(args.bsize, 1, 28, 28).data[0][0], cmap=plt.cm.Blues)
+
+            
+    return total_loss / total, total_kl / total
+
+
 
 if __name__ == "__main__":
     train_loader, val_loader, test_loader = load_mnist()
+    
+    encoder = Encoder(dim=784)
+    decoder = Decoder(dim=784)
+    model = NormalVAE(encoder, decoder)
+    
+    loss_func = nn.BCEWithLogitsLoss(size_average=False)
+    optim = torch.optim.Adam(model.parameters(), lr=args.lr)
+    
+    
+    #Train
+    i = 0
+    print("Training..")
+    for epoch in tqdm(range(args.epoch)):
+        rec_loss, kl_loss = train(train_loader, model, loss_func)
+        print("Train ==> Epoch: {} Reconstruction Loss: {} KL Loss: {}".format(i, rec_loss, kl_loss))
+        rec_loss_val, kl_loss_val = val(val_loader, model, loss_func)
+        print("Val ==> Epoch: {} Reconstruction Loss: {} KL Loss: {}".format(i, rec_loss_val, kl_loss_val))
+        i += 1
+        
+    #Validate
+    print("Testing..")
+    rec_loss, kl_loss = val(val_loader, model, loss_func)
+    print("Epoch: {} Reconstruction Loss: {} KL Loss: {}".format(i, rec_loss, kl_loss))
+    
+    #Save model
+    
+    
+    #Sample some new pics
+    seed = seed_distribution.sample()
+    x = decoder(seed).view(args.bsize, 1, 28, 28)
+    for i in range(30):
+        fig, ax = plt.subplots()
+        ax.matshow(x.data[i][0], cmap=plt.cm.Blues)
+        
+    
+        
+    
+    
+    
+    
     
     
