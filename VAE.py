@@ -16,16 +16,16 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--devid", type=int, default=-1)
 
-    parser.add_argument("--epoch", type=int, default=13)
-    parser.add_argument("--latdim", type=int, default=2)
-    parser.add_argument("--layersize", type=int, default=256)
+    parser.add_argument("--epoch", type=int, default=15)
+    parser.add_argument("--latdim", type=int, default=20)
+    parser.add_argument("--layersize", type=int, default=400)
     parser.add_argument("--alpha", type=float, default=1)
 
     parser.add_argument("--optim", choices=["Adadelta", "Adam", "SGD"], default="SGD")
 
     parser.add_argument("--lr", type=float, default=0.001)
 
-    parser.add_argument("--bsize", type=int, default=128)
+    parser.add_argument("--bsize", type=int, default=64)
     return parser.parse_args()
 
 args = parse_args()
@@ -41,15 +41,19 @@ def load_mnist():
                                train=False, 
                                transform=transforms.ToTensor())
     
-    train_dataset[0][0]
     
     
     # Why not take x > .5 etc?
     # Treat the greyscale values as probabilities and sample to get binary data
     torch.manual_seed(3435)
-    train_img = torch.stack([torch.bernoulli(d[0]) for d in train_dataset])
+#    train_img = torch.stack([torch.bernoulli(d[0]) for d in train_dataset])
+#    train_label = torch.LongTensor([d[1] for d in train_dataset])
+#    test_img = torch.stack([torch.bernoulli(d[0]) for d in test_dataset])
+#    test_label = torch.LongTensor([d[1] for d in test_dataset])
+    
+    train_img = torch.stack([d[0] for d in train_dataset])
     train_label = torch.LongTensor([d[1] for d in train_dataset])
-    test_img = torch.stack([torch.bernoulli(d[0]) for d in test_dataset])
+    test_img = torch.stack([d[0] for d in test_dataset])
     test_label = torch.LongTensor([d[1] for d in test_dataset])
     
     # Split training and val set
@@ -144,7 +148,8 @@ def train(train_loader, model, loss_func):
         img, label = t
         batch_size = img.size()[0]
         if batch_size == args.bsize:
-
+            print(img[0])
+            raise Exception()
             
             # Standard setup. 
             model.zero_grad()
@@ -219,9 +224,9 @@ if __name__ == "__main__":
     #Train
     i = 0
     print("Training..")
-    for epoch in tqdm(range(args.epoch)):
+    for epoch in range(args.epoch):
         rec_loss, kl_loss = train(train_loader, model, loss_func)
-        print("Train ==> Epoch: {} Reconstruction Loss: {} KL Loss: {}".format(i, rec_loss, kl_loss))
+        #print("Train ==> Epoch: {} Reconstruction Loss: {} KL Loss: {}".format(i, rec_loss, kl_loss))
         rec_loss_val, kl_loss_val = val(val_loader, model, loss_func)
         print("Val ==> Epoch: {} Reconstruction Loss: {} KL Loss: {}".format(i, rec_loss_val, kl_loss_val))
         i += 1
